@@ -14,7 +14,7 @@ output:
     fig_width: 7
     number_sections: true
     toc: true
-bibliography: ../kallimachos.bib
+bibliography: kallimachos.bib
 ---
 
 ```{r knitr setup, include=FALSE, echo=FALSE, cache=FALSE}

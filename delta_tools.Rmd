@@ -10,7 +10,7 @@ output:
   html_document:
     fig_height: 3.5
     fig_width: 7
-bibliography: ../kallimachos.bib
+bibliography: kallimachos.bib
 ---
 
 ```{r DT_knitr_setup, include=FALSE, purl=FALSE, echo=FALSE, cache=FALSE}
