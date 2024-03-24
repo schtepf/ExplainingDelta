@@ -6,7 +6,7 @@ output:
   pdf_document:
     fig_height: 3.5
     fig_width: 7
-    keep_tex: true
+    keep_tex: false
   html_document:
     fig_height: 3.5
     fig_width: 7

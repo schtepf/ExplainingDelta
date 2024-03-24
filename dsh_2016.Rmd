@@ -1,12 +1,12 @@
 ---
-title: "Illustration for DSH Paper on Burrows Delta"
+title: "Results and visualisations of Evert et al. (2017)"
 author: "Stefan Evert"
 date: "8 Oct 2016"
 output:
   pdf_document:
     fig_height: 3.5
     fig_width: 7
-    keep_tex: true
+    keep_tex: false
     number_sections: true
     toc: true    
   html_document:

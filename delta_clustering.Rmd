@@ -6,7 +6,7 @@ output:
   pdf_document:
     fig_height: 3.5
     fig_width: 7
-    keep_tex: true
+    keep_tex: false
     number_sections: true
     toc: true
   html_document:
@@ -576,7 +576,7 @@ The dendrogram is the standard Ward clustering on the full data set (compare wit
 
 ```{r test_pvclust, fig.height=7}
 do.dendrogram(hcl.pvc, horiz=FALSE)
-text(res.pvc, cex=.6, col=c("black", "grey60"), print.num=FALSE)
+text(res.pvc, cex=.6, col=c("black", "grey60", "blue"), print.num=FALSE)
 pvrect(res.pvc, alpha=.95, border="red", lwd=1)
 pvrect(res.pvc, alpha=.99, border="#666666", lwd=2)
 ```

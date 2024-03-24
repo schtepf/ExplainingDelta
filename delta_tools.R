@@ -1,18 +1,20 @@
-## ----DT_libraries, message=FALSE-----------------------------------------
+## ----DT_libraries, message=FALSE----------------------------------------------
 library(wordspace)
 library(cluster)      # for PAM clustering
 library(MASS)         # for MDS visualization
 library(matrixStats)  # fast row- and column-wise statistics
 library(colorspace)   # for well-designed colour palettes
 
-## ----DT_globals----------------------------------------------------------
+
+## ----DT_globals---------------------------------------------------------------
 ## standard colour palettes of Seaborn visualization library
 seaborn.pal <- c("#4C72B0","#55A868","#C44E52","#8172B2","#CCB974","#64B5CD")
 muted.pal <- c("#4878CF","#6ACC65","#D65F5F","#B47CC7","#C4AD66","#77BEDB")
 bright.pal <- c("#003FFF","#03ED3A","#E8000B","#8A2BE2","#FFC400","#00D7FF")
 grayscale.pal <- c("black", "#888888", "#555555", "#BBBBBB")
 
-## ----DT_adjustedRandIndex------------------------------------------------
+
+## ----DT_adjustedRandIndex-----------------------------------------------------
 adjustedRandIndex <- function (x, y) {
   x <- as.vector(x)
   y <- as.vector(y)
@@ -28,7 +30,8 @@ adjustedRandIndex <- function (x, y) {
   ARI
 }
 
-## ----DT_delta.dist-------------------------------------------------------
+
+## ----DT_delta.dist------------------------------------------------------------
 delta.dist <- function (M, n=NA, method="euclidean", p=2, normalize=NA, norm.p=p,
                         pca=NA, whiten=TRUE, prenorm=FALSE, transform=NULL) {
   if (!is.na(n) && n < ncol(M)) M <- M[, 1:n]
@@ -44,7 +47,8 @@ delta.dist <- function (M, n=NA, method="euclidean", p=2, normalize=NA, norm.p=p
   res
 }
 
-## ----ternarize-----------------------------------------------------------
+
+## ----ternarize----------------------------------------------------------------
 ternarize <- function(x, neutral.p=0, neutral.range=-qnorm((1 - neutral.p)/2), crossover=NULL) {
   y <- ifelse(abs(x) <= neutral.range, 0, sign(x))
   if (!is.null(crossover)) {
@@ -57,7 +61,8 @@ ternarize <- function(x, neutral.p=0, neutral.range=-qnorm((1 - neutral.p)/2), c
   }
 }
 
-## ----binarize------------------------------------------------------------
+
+## ----binarize-----------------------------------------------------------------
 binarize <- function(x, threshold=0, underuse.val=0, crossover=NULL) {
   y <- ifelse(x <= threshold, underuse.val, 1)
   if (!is.null(crossover)) {
@@ -70,7 +75,8 @@ binarize <- function(x, threshold=0, underuse.val=0, crossover=NULL) {
   }
 }
 
-## ----binternize----------------------------------------------------------
+
+## ----binternize---------------------------------------------------------------
 binternize <- function(z, f, df=nrow(z)/2, hapax=FALSE, crossover=NULL,
                        neutral.p=1/3, neutral.range=-qnorm((1 - neutral.p)/2)) {
   if (length(dim(z)) != 2) stop("first argument must be a (sparse or dense) matrix")
@@ -90,12 +96,14 @@ binternize <- function(z, f, df=nrow(z)/2, hapax=FALSE, crossover=NULL,
   }
 }
 
-## ----clamp---------------------------------------------------------------
+
+## ----clamp--------------------------------------------------------------------
 clamp <- function (x, min=-1, max=1) {
   pmax(pmin(x, max), min)  
 }
 
-## ----spike_plot----------------------------------------------------------
+
+## ----spike_plot---------------------------------------------------------------
 spike.pal <- rainbow_hcl(6, c=60, l=50)[c(1,5,3,2,6,4)] # suitable palette with clear contrasts
 spike.plot <- function (x, lwd=1, col=spike.pal, lty="solid", stride=NA,
                         diff=FALSE, legend=NULL, ylim=range(x), ...) {  
@@ -139,7 +147,8 @@ spike.plot <- function (x, lwd=1, col=spike.pal, lty="solid", stride=NA,
 }
 # spike.plot(zDE[1:2,1:50], diff=TRUE, lwd=3, legend=c("A", "B"), ylim=c(-2.5, 2.5))  # for testing
 
-## ----DT_nn.classify------------------------------------------------------
+
+## ----DT_nn.classify-----------------------------------------------------------
 nn.classify <- function (M, gold, ..., predicted=FALSE) {
   stopifnot(nrow(M) == length(gold))
   gold <- as.character(gold) # in case gold is a factor
@@ -152,7 +161,8 @@ nn.classify <- function (M, gold, ..., predicted=FALSE) {
   if (predicted) nn.predict else accuracy
 }
 
-## ----DT_pam.cluster------------------------------------------------------
+
+## ----DT_pam.cluster-----------------------------------------------------------
 pam.cluster <- function (M, gold, ..., clusters=NULL, predicted=FALSE,
                          clust.method=c("pam", "ward", "complete", "single", "average", "hclust")) {
   stopifnot(nrow(M) == length(gold))
@@ -195,7 +205,8 @@ pam.cluster <- function (M, gold, ..., clusters=NULL, predicted=FALSE,
   structure(res, n.clusters=clusters, avg.width=sil)
 }
 
-## ----DT_evaluate---------------------------------------------------------
+
+## ----DT_evaluate--------------------------------------------------------------
 evaluate <- function (M, gold, n=NA, p=2, norm.p=2, clusters=NULL, label=NULL, 
                       do.nn=TRUE, do.cluster=TRUE, clust.method="pam", ...) {
   if (all(is.na(n))) n <- ncol(M)
