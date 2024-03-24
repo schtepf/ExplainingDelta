@@ -1,0 +1,116 @@
+---
+title: "Statistical significance of Delta-based authorship attribution"
+author: "Stefan Evert"
+date: "15 May 2019"
+output:
+  pdf_document:
+    fig_height: 3.5
+    fig_width: 7
+    keep_tex: true
+  html_document:
+    fig_height: 3.5
+    fig_width: 7
+bibliography: ../kallimachos.bib
+---
+
+```{r knitr setup, include=FALSE, echo=FALSE, cache=FALSE}
+knitr::opts_chunk$set(cache=TRUE, dev.args=list(pointsize=9))
+## knitr::opts_knit$set(global.par=TRUE) # to use single graphics device for entire document
+```
+
+```{r load_tools, include=FALSE, echo=FALSE, cache=FALSE}
+knitr::purl("delta_tools.Rmd", quiet=TRUE)
+source("delta_tools.R")
+library(corpora)
+```
+
+
+# Some preliminaries
+
+
+## Data sets
+
+Load relative frequencies and z-scores for the German, English and French data set.  For technical reasons, the data structures store the transposed document-term matrices $\mathbf{F}^T$ and $\mathbf{Z}^T$
+```{r load_data}
+load("data/delta_corpus.rda")
+## FreqDE, FreqEN, FreqFR ... text-word matrix with absolute and relative frequencies
+## zDE, zEN, zFR          ... standardized (z-transformed) relative frequencies
+## goldDE, goldEN, goldFR ... gold standard labels (= author names)
+```
+- $\mathbf{F}^T$ is available under the names `FreqDE$S`, `FreqEN$S` and `FreqFR$S`
+- $\mathbf{Z}^T$ is available under the names `zDE`, `zEN` and `zFR`
+- absolute frequencies $n_{D_j} \cdot f_i(D_j)$ can be found in `FreqDE$M`, `FreqEN$M`, `FreqFR$M`
+
+## Setup for plots
+
+```{r num_features_setup}
+n.vals <- round(10 ^ seq(1, 4, .1)) # logarithmic steps
+draw.grid <- function () { # corresponding grid for plot region
+  abline(h=seq(0, 100, 10), col="grey60")
+  abline(v=c(10,20,50,100,200,500,1000,2000,5000,10000), col="grey60")
+}
+```
+
+
+# Cross-validation
+
+The standard approach in supervised classification tasks is to estimate sampling variation from cross-validation runs. In a leave-one-out setting, this amounts to treating the test items as a random sample ($\to$ binomial confidence interval) and ignoring variability due to training data and the choice of authors.
+
+Let us start with a standard evaluation plot:
+
+```{r num_features_ari_DE, echo=FALSE}
+plot(1, 100, type="n", log="x", xlim=range(n.vals), ylim=c(0,100),
+     xlab="# features", ylab="adjusted Rand index (%)", main="German (z-scores, k-medoids clustering)",
+     xaxs="i", yaxs="i", las=3, xaxp=c(range(n.vals), 3))
+draw.grid()
+lines(n.vals, evaluate(zDE, goldDE, n=n.vals, method="manhattan")$adj.rand, lwd=3, col=1)
+lines(n.vals, evaluate(zDE, goldDE, n=n.vals, method="euclidean")$adj.rand, lwd=3, col=2)
+lines(n.vals, evaluate(zDE, goldDE, n=n.vals, method="cosine")$adj.rand, lwd=3, col=3)
+legend("bottomright", inset=.02, bg="white", lwd=3, col=1:3, 
+       legend=c("Burrows Delta", "Quadratic Delta", "Cosine Delta"))
+```
+
+For the cross-validation approach, we re-evaluated based on the accuracy of a 1-NN classifier:
+
+```{r num_features_nn_DE, echo=FALSE}
+plot(1, 100, type="n", log="x", xlim=range(n.vals), ylim=c(0,100),
+     xlab="# features", ylab="accuracy (%)", main="German (z-scores, 1-NN classifier)",
+     xaxs="i", yaxs="i", las=3, xaxp=c(range(n.vals), 3))
+draw.grid()
+lines(n.vals, evaluate(zDE, goldDE, n=n.vals, method="manhattan")$accuracy, lwd=3, col=1)
+lines(n.vals, evaluate(zDE, goldDE, n=n.vals, method="euclidean")$accuracy, lwd=3, col=2)
+lines(n.vals, evaluate(zDE, goldDE, n=n.vals, method="cosine")$accuracy, lwd=3, col=3)
+legend("bottomright", inset=.02, bg="white", lwd=3, col=1:3, 
+       legend=c("Burrows Delta", "Quadratic Delta", "Cosine Delta"))
+```
+
+We now define a function that re-constructs the number of correct assignments and generates binomial confidence intervals.
+
+```{r plotCV}
+plot.cv <- function (x, acc, n=75, col=1, alpha=.1) {
+  correct <- round(n * acc / 100)
+  cint <- prop.cint(correct, n, method="binomial")
+  bg.col <- adjustcolor(palette()[col], alpha=alpha)
+  polygon(c(x, rev(x)), 100 * c(cint$upper, rev(cint$lower)),
+          border=col, col=bg.col)
+  lines(x, acc, lwd=3, col=col)
+}
+```
+
+```{r num_features_nn_cv_DE, echo=FALSE}
+plot(1, 100, type="n", log="x", xlim=range(n.vals), ylim=c(0,100),
+     xlab="# features", ylab="accuracy (%)", main="German (z-scores, 1-NN classifier w/ cross-validation)",
+     xaxs="i", yaxs="i", las=3, xaxp=c(range(n.vals), 3))
+draw.grid()
+plot.cv(n.vals, evaluate(zDE, goldDE, n=n.vals, method="manhattan", do.clus=FALSE)$accuracy, col=1)
+plot.cv(n.vals, evaluate(zDE, goldDE, n=n.vals, method="euclidean", do.clus=FALSE)$accuracy, col=2)
+plot.cv(n.vals, evaluate(zDE, goldDE, n=n.vals, method="cosine", do.clus=FALSE)$accuracy, col=3)
+legend("bottomright", inset=.02, bg="white", lwd=3, col=1:3, 
+       legend=c("Burrows Delta", "Quadratic Delta", "Cosine Delta"))
+```
+
+
+
+# References
+
+

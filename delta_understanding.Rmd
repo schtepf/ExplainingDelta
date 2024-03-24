@@ -1,0 +1,376 @@
+---
+title: "Understanding Burrows Delta and its variants"
+author: "Stefan Evert"
+date: "16 January 2015"
+output:
+  pdf_document:
+    fig_height: 3.5
+    fig_width: 7
+    keep_tex: true
+  html_document:
+    fig_height: 3.5
+    fig_width: 7
+bibliography: ../kallimachos.bib
+---
+
+```{r knitr setup, include=FALSE, echo=FALSE, cache=FALSE}
+knitr::opts_chunk$set(cache=TRUE, dev.args=list(pointsize=9))
+## knitr::opts_knit$set(global.par=TRUE) # to use single graphics device for entire document
+```
+
+```{r load_tools, include=FALSE, echo=FALSE, cache=FALSE}
+knitr::purl("delta_tools.Rmd", quiet=TRUE)
+source("delta_tools.R")
+```
+
+
+# Some preliminaries
+
+
+## Data sets
+
+Load relative frequencies and z-scores for the German, English and French data set.  For technical reasons, the data structures store the transposed document-term matrices $\mathbf{F}^T$ and $\mathbf{Z}^T$
+```{r load_data}
+load("data/delta_corpus.rda")
+## FreqDE, FreqEN, FreqFR ... text-word matrix with absolute and relative frequencies
+## zDE, zEN, zFR          ... standardized (z-transformed) relative frequencies
+## goldDE, goldEN, goldFR ... gold standard labels (= author names)
+```
+- $\mathbf{F}^T$ is available under the names `FreqDE$S`, `FreqEN$S` and `FreqFR$S`
+- $\mathbf{Z}^T$ is available under the names `zDE`, `zEN` and `zFR`
+- absolute frequencies $n_{D_j} \cdot f_i(D_j)$ can be found in `FreqDE$M`, `FreqEN$M`, `FreqFR$M`
+
+
+
+## A partial replication of @JannidisEtal2015
+
+@JannidisEtal2015 compute clusterings for different versions of the Delta measure based on the most frequent $n_w = 100, 1000, 5000$ words as features.  Our results for Burrows Delta $\Delta_B$ are:
+```{r replicate_2015_BD, results="asis"}
+n.vals <- c(100, 1000, 5000)
+res <- rbind(
+  evaluate(zDE, goldDE, n=n.vals, method="manhattan", label="DE | Burrows D"),
+  evaluate(zEN, goldEN, n=n.vals, method="manhattan", label="EN | Burrows D"),
+  evaluate(zFR, goldFR, n=n.vals, method="manhattan", label="FR | Burrows D"))
+knitr::kable(res)
+```
+
+Quadratic Delta $\sqrt{\Delta_Q}$ achieves a considerably lower accuracy and Rand index than $\Delta_B$, which is in line with the findings of [@JannidisEtal2015].
+```{r replicate_2015_QD, results="asis"}
+res <- rbind(
+  evaluate(zDE, goldDE, n=n.vals, method="euclidean", label="DE | Quadratic D"),
+  evaluate(zEN, goldEN, n=n.vals, method="euclidean", label="EN | Quadratic D"),
+  evaluate(zFR, goldFR, n=n.vals, method="euclidean", label="FR | Quadratic D"))
+knitr::kable(res)
+```
+
+@JannidisEtal2015 report best clustering results for Cosine Delta $\Delta_\angle$, which is based on cosine similarity (or, equivalently, angular distance) between features vectors rather than their Euclidean distance. This stands in stark contrast to Argamon's probabilistic argumentation, but is confirmed by our replication.
+```{r replicate_2015_CD, results="asis"}
+res <- rbind(
+  evaluate(zDE, goldDE, n=n.vals, method="cosine", label="DE | Cosine D"),
+  evaluate(zEN, goldEN, n=n.vals, method="cosine", label="EN | Cosine D"),
+  evaluate(zFR, goldFR, n=n.vals, method="cosine", label="FR | Cosine D"))
+knitr::kable(res)
+```
+
+## Setup for plots
+
+```{r num_features_setup}
+n.vals <- round(10 ^ seq(1, 4, .1)) # logarithmic steps
+draw.grid <- function () { # corresponding grid for plot region
+  abline(h=seq(0, 100, 10), col="grey60")
+  abline(v=c(10,20,50,100,200,500,1000,2000,5000,10000), col="grey60")
+}
+```
+
+
+# Clustering Methods
+
+Apart from the Delta distance measure itself, the clustering algorithm seems to have a substantial impact on classification accuracy / ARI.  Let us start with a comparison of different clustering methods for Burrows Delta $\Delta_B$:
+
+```{r clustering_methods_DE}
+plot(1, 100, type="n", log="x", xlim=range(n.vals), ylim=c(0,100),
+     xlab="# features", ylab="adjusted Rand index (%)", main="German (Burrows Delta)",
+     xaxs="i", yaxs="i", las=3, xaxp=c(range(n.vals), 3))
+draw.grid()
+lines(n.vals, evaluate(zDE, goldDE, n=n.vals, meth="manh", clust.m="pam")$adj.rand, lwd=3, col=1)
+lines(n.vals, evaluate(zDE, goldDE, n=n.vals, meth="manh", clust.m="single")$adj.rand, lwd=3, col=5)
+lines(n.vals, evaluate(zDE, goldDE, n=n.vals, meth="manh", clust.m="complete")$adj.rand, lwd=3, col=3)
+lines(n.vals, evaluate(zDE, goldDE, n=n.vals, meth="manh", clust.m="ward")$adj.rand, lwd=3, col=4)
+lines(n.vals, evaluate(zDE, goldDE, n=n.vals, meth="manh", clust.m="hclust")$adj.rand, lwd=3, col=2)
+legend("bottomright", inset=.02, bg="white", lwd=3, col=c(1,5,3,4,2), 
+       legend=c("k-medoids (PAM)", "single link", "complete", "Ward", "Ward (hclust)"))
+```
+
+The enormous influence of clustering methods on attribution quality suggests a more complex interplay between the structure of inter-text distances induced by some Delta measure and the clustering algorithm.  It would be too simplistic to equate good performance in the PAM-based evaluation with a better measure of stylistic similarity.  Many further experiments seem to be required in order to understand why and how clusters are formed from text distances.
+
+This observation also puts the amazing effect of vector normalization in a new light: Ward clustering seems to be fairly robust w/o normalization, even for $\Delta_Q$ (cf. two plots below).  Perhaps the normalization effect we're trying to understand merely adjusts for a weakness of certain clustering algorithms?
+
+```{r num_features_DE_pnorms_pam, echo=FALSE}
+plot(1, 100, type="n", log="x", xlim=range(n.vals), ylim=c(0,100),
+     xlab="# features", ylab="adjusted Rand index (%)", main="German (z-scores, k-medoids clustering)",
+     xaxs="i", yaxs="i", las=3, xaxp=c(range(n.vals), 3))
+draw.grid()
+lines(n.vals, evaluate(zDE, goldDE, n=n.vals, method="manhattan")$adj.rand, lwd=3, col=1)
+lines(n.vals, evaluate(zDE, goldDE, n=n.vals, method="euclidean")$adj.rand, lwd=3, col=2)
+lines(n.vals, evaluate(zDE, goldDE, n=n.vals, method="cosine")$adj.rand, lwd=3, col=3)
+lines(n.vals, evaluate(zDE, goldDE, n=n.vals, method="minkowski", p=0.5)$adj.rand, lwd=3, col=4)
+lines(n.vals, evaluate(zDE, goldDE, n=n.vals, method="minkowski", p=4)$adj.rand, lwd=3, col=6)
+legend("bottomright", inset=.02, bg="white", lwd=3, col=c(3,4,1,2,6), 
+       legend=expression("Cosine Delta", L[1/2]*"-Delta", "Burrows "*(L[1])*" Delta", 
+                         "Quadratic "*(L[2])*" Delta", L[4]*"-Delta"))
+```
+
+```{r num_features_DE_pnorms_ward, echo=FALSE}
+plot(1, 100, type="n", log="x", xlim=range(n.vals), ylim=c(0,100),
+     xlab="# features", ylab="adjusted Rand index (%)", main="German (z-scores, Ward clustering)",
+     xaxs="i", yaxs="i", las=3, xaxp=c(range(n.vals), 3))
+draw.grid()
+lines(n.vals, evaluate(zDE, goldDE, n=n.vals, clust.method="ward", method="manhattan")$adj.rand, lwd=3, col=1)
+lines(n.vals, evaluate(zDE, goldDE, n=n.vals, clust.method="ward", method="euclidean")$adj.rand, lwd=3, col=2)
+lines(n.vals, evaluate(zDE, goldDE, n=n.vals, clust.method="ward", method="cosine")$adj.rand, lwd=3, col=3)
+lines(n.vals, evaluate(zDE, goldDE, n=n.vals, clust.method="ward", method="minkowski", p=0.5)$adj.rand, lwd=3, col=4)
+lines(n.vals, evaluate(zDE, goldDE, n=n.vals, clust.method="ward", method="minkowski", p=4)$adj.rand, lwd=3, col=6)
+legend("bottomright", inset=.02, bg="white", lwd=3, col=c(3,4,1,2,6), 
+       legend=expression("Cosine Delta", L[1/2]*"-Delta", "Burrows "*(L[1])*" Delta", 
+                         "Quadratic "*(L[2])*" Delta", L[4]*"-Delta"))
+```
+
+
+
+An easy explanation would be that the clustering algorithms react differently to the scaling of outlier distances, which increase much more quickly for $\Delta_Q$ than $\Delta_B$, for instance.  This effect could be counteracted by transforming the distance values using a suitable concave function (so that the metric property is preserved).  As the plot below shows, neither reducing nor exaggerating outlier distances seems to have a substantial effect on authorship attribution quality:
+
+```{r clustering_dist_transform_pam_DE}
+plot(1, 100, type="n", log="x", xlim=range(n.vals), ylim=c(0,100),
+     xlab="# features", ylab="adjusted Rand index (%)", main="German (Burrows Delta, PAM)",
+     xaxs="i", yaxs="i", las=3, xaxp=c(range(n.vals), 3))
+draw.grid()
+lines(n.vals, evaluate(zDE, goldDE, n=n.vals, meth="manh", clust.m="pam", trans=NULL)$adj.rand, lwd=3, col=1)
+lines(n.vals, evaluate(zDE, goldDE, n=n.vals, meth="manh", clust.m="pam", trans=sqrt)$adj.rand, lwd=3, col=2)
+lines(n.vals, evaluate(zDE, goldDE, n=n.vals, meth="manh", clust.m="pam", trans=function(x) log(x+1))$adj.rand, lwd=3, col=3)
+lines(n.vals, evaluate(zDE, goldDE, n=n.vals, meth="manh", clust.m="pam", trans=function(x) x*x)$adj.rand, lwd=3, col=4)
+legend("bottomright", inset=.02, bg="white", lwd=3, col=1:4, 
+       legend=expression(d, sqrt(d), log(d+1), d^2))
+```
+
+```{r clustering_dist_transform_ward_DE}
+plot(1, 100, type="n", log="x", xlim=range(n.vals), ylim=c(0,100),
+     xlab="# features", ylab="adjusted Rand index (%)", main="German (Burrows Delta, Ward/hclust)",
+     xaxs="i", yaxs="i", las=3, xaxp=c(range(n.vals), 3))
+draw.grid()
+lines(n.vals, evaluate(zDE, goldDE, n=n.vals, meth="manh", clust.m="hclust", trans=NULL)$adj.rand, lwd=3, col=1)
+lines(n.vals, evaluate(zDE, goldDE, n=n.vals, meth="manh", clust.m="hclust", trans=sqrt)$adj.rand, lwd=3, col=2)
+lines(n.vals, evaluate(zDE, goldDE, n=n.vals, meth="manh", clust.m="hclust", trans=function(x) log(x+1))$adj.rand, lwd=3, col=3)
+lines(n.vals, evaluate(zDE, goldDE, n=n.vals, meth="manh", clust.m="hclust", trans=function(x) x*x)$adj.rand, lwd=3, col=4)
+legend("bottomright", inset=.02, bg="white", lwd=3, col=1:4, 
+       legend=expression(d, sqrt(d), log(d+1), d^2))
+```
+
+
+
+# Understanding Delta
+
+> **TODO:** control use of MDS / t-SNE with parameter; MDS is too messy to show anything, t-SNE seems far too clean; perhaps specify an MDS-based initial configuration for reproducible results? (but this would fail to re-arrange data points) or supply t-SNE embedding as initial config to MDS?
+
+A quick first try.  Use the optimal 500-dimensional vectors, and $\Delta_B$ and $\Delta_Q$ with and without L~2~-normalization.
+
+```{r mdsmap}
+library(tsne)
+mdsmap <- function (M, class, method="euclidean", ...) {
+#  coord <- isoMDS(dist.matrix(M, method=method), trace=FALSE)$points
+  coord <- suppressMessages(tsne(dist.matrix(M, method=method, as.dist=TRUE)))
+  class <- as.factor(class)
+  col.vals <- rep(1:8, 4)  
+  pch.vals <- rep(21:24, each=8)
+  plot(coord, pch=pch.vals[class], bg=col.vals[class],
+       xlab="", ylab="", xaxt="n", yaxt="n", ...)
+}
+mdsmap(zDE[,1:500], goldDE)
+```
+
+```{r mdsmap_DE_BD, fig.width=8, fig.height=8}
+M <- zDE[, 1:500]
+M2 <- normalize.rows(M)
+par(mfrow=c(2,2), mar=c(2,2,2,2)+.1)
+mdsmap(M, goldDE,  method="manhattan", cex=1.5, main="Burrows Delta")
+mdsmap(M, goldDE,  method="euclidean", cex=1.5, main="Quadratic Delta")
+mdsmap(M2, goldDE, method="manhattan", cex=1.5, main="Burrows Delta / L2")
+mdsmap(M2, goldDE, method="euclidean", cex=1.5, main="Quadratic Delta / L2")
+par(mfrow=c(1,1))
+```
+
+> **TODO:** measure importance of features = contribution to relevant differences in distances, then visualize distribution (spike plot or importance histogram) and look at some top features
+
+
+
+# Visualizing feature vectors
+
+One possibility is to visualize feature vectors directly in the form of spike plots.  Since it doesn't seem to be possible to display more than a few hundred dimensions, this approach is mostly useful as an illustration of rescaling techniques. 
+With normalization, $n_w=500$ words achieves optimal performance in all three languages. To obtain more interpretable pictures, let us look at the first 200 dimensions, which already produce a high-quality clustering. For this first test, we compare _Werther_ against _Effie Briest_.
+
+```{r spike_werther_effi, fig.height=3}
+xy <- zDE[c(2, 8), 1:200]
+spike.plot(xy, lwd=2)
+```
+
+The picture is clearer if we just show differences between the two feature vectors.  Green segments indicate that _Werther_ has a higher feature value than _Effi_, and red segments vice versa.
+
+```{r spike_werther_effi_diff, fig.height=3}
+spike.plot(xy, diff=TRUE, lwd=2)
+```
+
+These profiles are amazingly different, but the two vectors also have markedly different lengths.
+
+```{r norms_werther_effi}
+rowNorms(xy)
+```
+
+Here is the corresponding spike plot for normalized vectors:
+
+```{r spike_werther_effi_normalized, fig.height=3}
+xy.norm <- normalize.rows(xy)
+spike.plot(xy.norm, diff=TRUE, lwd=2)
+```
+
+
+> **TODO:** It will probably be more informative to compare the profiles of very similar texts by different authors, or to choose "interesting" text pairs from a MDS map. We should experiment with ordering the vectors, e.g. by feature informativeness, difference value, or one of the profiles.
+
+
+## Spike plots as illustration of "fingerprint" profiles
+
+Spike plots might be useful to illustrate the notion of an author's "fingerprint".  As an English example, let us compare Thomas Hardy's *Tess of the d'Urbervilles* (#57) with *Far from the Madding Crowd* (#53) and Charles Dickens's *Oliver Twist* (#34).  
+
+```{r spike_english_ex}
+spike.idx <- c(53,57,34)
+spike.legend <- c("Hardy: Far from the Madding Crowd",
+                  "Hardy: Tess of the d'Urbervilles", 
+                  "Dickens: Oliver Twist")
+```
+
+
+### Relative frequencies
+
+First, we look at the vectors $\mathbf{f}(D)$ of relative frequencies:
+
+```{r spike_english_ex_f}
+x <- FreqEN$S[spike.idx, ]
+knitr::kable(round(x[, 1:12], 3))
+spike.plot(x[c(1,2), 1:150], legend=spike.legend[1:2], yaxs="i", ylim=c(0, .055))
+spike.plot(x[c(1,3), 1:150], col=spike.pal[c(1,3)], legend=spike.legend[c(1,3)], yaxs="i", ylim=c(0, .055))
+```
+
+
+### Overuse/underuse
+
+The fingerprint (or "key profile") intuition is based on the overuse/underuse of a word by an author compared to other authors. Therefore, center the relative frequencies by subtracting the data set means, i.e. plot the values $f_i(D) - \mu_i$ for each text $D$:
+
+```{r spike_english_ex_f_centered}
+x <- scale(FreqEN$S, center=TRUE, scale=FALSE)[spike.idx, ]
+knitr::kable(round(x[, 1:12], 3))
+spike.plot(x[c(1,2), 1:150], legend=spike.legend[1:2], yaxs="i", ylim=c(-.008, .008))
+spike.plot(x[c(1,3), 1:150], col=spike.pal[c(1,3)], legend=spike.legend[c(1,3)], yaxs="i", ylim=c(-.008, .008))
+```
+
+
+### z-Scores give equal weight to all features
+
+But the fingerprints only become clearly visible after standardization to z-scores $\mathbf{z}(D)$:
+
+```{r spike_english_ex_z}
+x <- zEN[spike.idx, ]
+knitr::kable(round(x[, 1:12], 2))
+spike.plot(x[c(1,2), 1:150], legend=spike.legend[1:2], yaxs="i", ylim=c(-2, 2))
+spike.plot(x[c(1,3), 1:150], col=spike.pal[c(1,3)], legend=spike.legend[c(1,3)], yaxs="i", ylim=c(-2, 2))
+```
+
+In case people in the audience have insufficient visual acuity to perceive the very obvious difference between the two pairs of profiles immediately, we confirm numerically that the profiles of the two Hardy novels are much more similar than Hardy vs. Dickens.
+
+```{r spike_english_ex_z_delta}
+round(dist.matrix(zEN[spike.idx, 1:150], method="manhattan", as.dist=TRUE), 2)
+```
+
+
+### The effect of normalization
+
+Now we can visualize the effect of vector normalization and other transformations.
+
+```{r spike_english_ex_normalized}
+x <- normalize.rows(zEN[spike.idx, 1:5000])[, 1:150]
+knitr::kable(round(x[, 1:12], 2))
+spike.plot(x[c(1,2), 1:150], legend=spike.legend[1:2], yaxs="i", ylim=c(-.03, .03))
+spike.plot(x[c(1,3), 1:150], col=spike.pal[c(1,3)], legend=spike.legend[c(1,3)], yaxs="i", ylim=c(-.03, .03))
+```
+
+
+### Clamping outlier values
+
+For the illustration, we clamp z-scores to the range $[-1, +1]$ so that effect becomes more visible (y-axis only shows range $[-2, +2]$).
+
+```{r spike_english_ex_clamped}
+x <- clamp(zEN[spike.idx, ], min=-1, max=1)
+knitr::kable(round(x[, 1:12], 2))
+spike.plot(x[c(1,2), 1:150], legend=spike.legend[1:2], yaxs="i", ylim=c(-2, 2))
+spike.plot(x[c(1,3), 1:150], col=spike.pal[c(1,3)], legend=spike.legend[c(1,3)], yaxs="i", ylim=c(-2, 2))
+```
+
+
+### Quantile transformation
+
+Another way of giving truly equal weight to all features -- even those with highly skewed distributions -- is to transform the relative frequencies to empirical quantiles (across all texts in the collection).
+
+```{r spike_english_ex_quantile}
+quantile.score <- function(x) {
+  if (is.matrix(x)) {
+    apply(x, 2, quantile.score) # apply to columns of matrix
+  } else {
+    2 * ((rank(x, ties="average") - 0.5) / length(x)) - 1
+  }
+}
+x <- quantile.score(zEN[, 1:150])[spike.idx, ] # limit expensive quantile transform to relevant columns
+knitr::kable(round(x[, 1:12], 2))
+spike.plot(x[c(1,2), 1:150], legend=spike.legend[1:2], yaxs="i", ylim=c(-1., 1.2))
+spike.plot(x[c(1,3), 1:150], col=spike.pal[c(1,3)], legend=spike.legend[c(1,3)], yaxs="i", ylim=c(-1.2, 1.2))
+```
+
+
+### Ternarization
+
+An extreme form of deskewing the distribution of z-scores is quantization the feature values into underuse, neutral and overuse categories (ternarization) or into presence vs. absence (binarization).
+
+The default ternarization strategy sets thresholds so that a third of the data points each fall into the positive, neutral and negative category assuming a standard normal distribution.
+
+```{r spike_english_ex_ternary}
+x <- ternarize(zEN[spike.idx, ], neutral.p=1/3)
+knitr::kable(round(x[, 1:12], 2))
+spike.plot(x[c(1,2), 1:150], legend=spike.legend[1:2], yaxs="i", ylim=c(-1.5, 1.5))
+spike.plot(x[c(1,3), 1:150], col=spike.pal[c(1,3)], legend=spike.legend[c(1,3)], yaxs="i", ylim=c(-1.5, 1.5))
+```
+
+Alternatively, we can binarize the feature vectors into two categories.  For low-frequency features (roughly $n_w > 1000$) this corresponds to presence vs. absence of the respective word (similar to a binarized vector space model in IR); for high-frequency features, the categories correspond to overuse ($z > 0$) vs. underuse ($z \leq 0$).  Note that the visualization below only covers high-frequency words, so the spikes visible in the plot mark overuse.
+
+```{r spike_english_ex_binary}
+x <- binarize(zEN[spike.idx, ])
+knitr::kable(round(x[, 1:12], 2))
+spike.plot(x[c(1,2), 1:150], legend=spike.legend[1:2], yaxs="i", ylim=c(-1.5, 1.5))
+spike.plot(x[c(1,3), 1:150], col=spike.pal[c(1,3)], legend=spike.legend[c(1,3)], yaxs="i", ylim=c(-1.5, 1.5))
+```
+
+The main rationale behind binarization / ternarization is that z-scores aren't meaningful for very sparse features with a highly skewed distribution; in this case, we should only distinguish between presence and absence (or over-/underuse) rather than measure the degree of deviation.  This suggests a mixed approach where MFW features transition from z-scores to ternarized values.
+
+```{r spike_english_ex_ternary_mix}
+x <- ternarize(zEN[spike.idx, ], neutral.p=1/3, crossover=150)
+spike.plot(x[c(1,2), 1:150], legend=spike.legend[1:2], yaxs="i", ylim=c(-1.5, 1.5))
+spike.plot(x[c(1,3), 1:150], col=spike.pal[c(1,3)], legend=spike.legend[c(1,3)], yaxs="i", ylim=c(-1.5, 1.5))
+```
+
+Such a mixed approach seems particularly appropriate for binarization, with a long crossover phase so that full binarization is only achieved for $n_w \gg 1000$.
+
+```{r spike_english_ex_binary_mix}
+x <- binarize(zEN[spike.idx, ], crossover=150)
+spike.plot(x[c(1,2), 1:150], legend=spike.legend[1:2], yaxs="i", ylim=c(-1.5, 1.5))
+spike.plot(x[c(1,3), 1:150], col=spike.pal[c(1,3)], legend=spike.legend[c(1,3)], yaxs="i", ylim=c(-1.5, 1.5))
+```
+
+
+# References
+
+

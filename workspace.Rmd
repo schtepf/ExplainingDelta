@@ -1,0 +1,32 @@
+---
+title: "workspace"
+author: "Stefan Evert"
+date: "16 January 2015"
+output:
+  html_document:
+    fig_height: 4.5
+    fig_width: 6
+  pdf_document:
+    fig_height: 4.5
+    fig_width: 6
+---
+
+```{r knitr_setup, include=FALSE}
+knitr::opts_chunk$set(dev.args=list(pointsize=9))
+```
+
+```{r load_tools, include=FALSE, cache=FALSE}
+knitr::purl("delta_tools.Rmd", quiet=TRUE)
+source("delta_tools.R")
+```
+
+
+```{r}
+plot(sin, main="Titel")
+```
+
+```{r fig.height=3}
+plot(sin)
+```
+
+

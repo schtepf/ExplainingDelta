@@ -1,0 +1,801 @@
+---
+title: "Illustration for DSH Paper on Burrows Delta"
+author: "Stefan Evert"
+date: "8 Oct 2016"
+output:
+  pdf_document:
+    fig_height: 3.5
+    fig_width: 7
+    keep_tex: true
+    number_sections: true
+    toc: true    
+  html_document:
+    fig_height: 3.5
+    fig_width: 7
+    number_sections: true
+    toc: true
+bibliography: ../kallimachos.bib
+---
+
+```{r knitr setup, include=FALSE, echo=FALSE, cache=FALSE}
+knitr::opts_chunk$set(cache=TRUE, dev.args=list(pointsize=9))
+## knitr::opts_knit$set(global.par=TRUE) # to use single graphics device for entire document
+```
+
+```{r load_tools, include=FALSE, echo=FALSE, cache=FALSE}
+knitr::purl("delta_tools.Rmd", quiet=TRUE)
+source("delta_tools.R")
+library(ggplot2)
+```
+
+# Data sets and setup
+
+This document collects all experiments and plots for the paper on Burrows Delta submitted to _Digital Scholarship in the Humanities_.
+
+Load relative frequencies and z-scores for the German, English and French data set.  For technical reasons, the data structures store the transposed document-term matrices $\mathbf{F}^T$ and $\mathbf{Z}^T$
+
+```{r load_data, echo=FALSE}
+load("data/delta_corpus.rda")
+## FreqDE, FreqEN, FreqFR ... text-word matrix with absolute and relative frequencies
+## zDE, zEN, zFR          ... standardized (z-transformed) relative frequencies
+## goldDE, goldEN, goldFR ... gold standard labels (= author names)
+```
+- $\mathbf{F}^T$ is available under the names `FreqDE$S`, `FreqEN$S` and `FreqFR$S`
+- $\mathbf{Z}^T$ is available under the names `zDE`, `zEN` and `zFR`
+- absolute frequencies $n_{D_j} \cdot f_i(D_j)$ can be found in `FreqDE$M`, `FreqEN$M`, `FreqFR$M`
+
+Callback functions for feature transformations are defined with suitable defaults: `clamp2` clamps outliers with $|z| > 2$, `ternarize3` uses theoretical 33% quantiles, and `crosstern3` adds a cross-over after 150 mfw.
+
+```{r, echo=FALSE}
+clamp2 <- function (x) clamp(x, min=-2, max=2)
+ternarize3 <- function (x, neutral.p=1/3, crossover=NULL) {
+  ternarize(x, neutral.p=neutral.p, crossover=crossover)
+}
+crosstern3 <- function (x) ternarize3(x, crossover=150)
+```
+
+
+# Illustrations
+
+## Example dendrogram (three authors from English corpus)
+
+```{r, echo=FALSE}
+do.dendrogram <- function (hc, col=NULL, horiz=TRUE, cut=NULL,
+                           lab.cex=.75, lab.font=2, dLeaf=(if (horiz) strwidth("x") else strheight("x")) / 5,
+                           mar=if (horiz) c(2,2,2,8)+.1 else c(10,2,2,2)+.1, ...) {
+  hc <- as.hclust(hc)
+  if (horiz && !is.null(cut)) stop("cut rectangles can only be displayed if horiz=FALSE")
+  dend <- as.dendrogram(hc, hang=0)
+  dend <- dendrapply(dend, function (N) {
+    if (is.leaf(N)) {
+      lab <- attr(N, "label") # set display parameters for leaf labels
+      nodePar <- attr(N, "nodePar")
+      nodePar$lab.cex <- lab.cex
+      nodePar$lab.col <- if (lab %in% names(col)) col[lab] else "black"
+      nodePar$lab.font <- lab.font
+      nodePar$pch <- NA
+      attr(N, "nodePar") <- nodePar
+    }
+    N
+  })
+  par.save <- par(mar=mar)
+  plot(dend, horiz=horiz, dLeaf=dLeaf, ...)
+  if (!is.null(cut)) rect.hclust(hc, k=cut, border="#666666")
+  par(par.save)
+}
+```
+
+As an illustration, show hierarchical clustering of 9 English novels (by Charlotte Brontë, Charles Dickens and William Makepeace Thackeray).  This is based on Burrows Delta with $n_w = 1000$.
+
+```{r example_dendrogram_EN, echo=FALSE, fig.width=6, fig.height=3}
+text.labels <- c(
+  bleak="Dickens: Bleak House", expectations="Dickens: Great Expectations",
+  oliver="Dickens: Oliver Twist", esmond="Thackeray: Henry Esmond",
+  pendennis="Thackeray: Pendennis", virginians="Thackeray: The Virginians",
+  jane="C. Brontë: Jane Eyre", shirley="C. Brontë: Shirley", villette="C. Brontë: Villette")
+idx <- which(FreqEN$rows$title %in% names(text.labels))
+M <- zEN[idx, 1:1000]
+rownames(M) <- text.labels[FreqEN$rows$title[idx]]
+text.cols <- seaborn.pal[as.integer(as.factor(FreqEN$rows$author[idx]))]
+names(text.cols) <- rownames(M)
+DM <- dist.matrix(M, method="manhattan", as.dist=TRUE)
+hcl <- hclust(DM, method="ward.D")
+par.save <- par(cex=1.2)
+do.dendrogram(hcl, col=text.cols, main="Burrows Delta (n = 1000)")
+par(par.save)
+```
+
+Black-and-white version for the paper:
+
+```{r example_dendrogram_EN_bw, echo=FALSE, fig.width=6, fig.height=3}
+par.save <- par(cex=1.2)
+text.pal <- grayscale.pal[c(2, 1, 3)] # so we have nice ordering in the histogram
+text.cols <- text.pal[as.integer(as.factor(FreqEN$rows$author[idx]))]
+names(text.cols) <- rownames(M)
+do.dendrogram(hcl, col=text.cols, main="Burrows Delta (n = 1000)")
+par(par.save)
+```
+
+
+
+
+## Spike plots as an illustration of Delta vectors
+
+We use the same texts as in the clustering example above.  Charlotte Brontë seems to write in a fairly consistent style, while there are enormous differences between the three novels by Charles Dickens.
+
+```{r example_spike_p}
+novels.spike <- c("jane", "shirley")
+idx.spike <- match(novels.spike, FreqEN$rows$title)
+labels.spike <- text.labels[novels.spike]
+spike.plot(FreqEN$S[idx.spike, 1:50], lwd=3, yaxs="i", ylim=c(0, 0.04),
+           legend=labels.spike, main="relative frequencies")
+```
+
+
+
+```{r example_spike_z}
+spike.plot(zEN[idx.spike, 1:50], lwd=3, yaxs="i", ylim=c(-2, 2),
+           legend=labels.spike, main="standardized z-scores")
+```
+
+```{r example_spike_z_norm}
+spike.plot(normalize.rows(zEN[idx.spike, 1:50]), lwd=3, yaxs="i", ylim=c(-.35, .35),
+           legend=labels.spike, main="standardized z-scores | L2 normalization")
+```
+
+```{r example_spike_clamp}
+spike.plot(clamp(zEN[idx.spike, 1:50], min=-1, max=1), lwd=3, yaxs="i", ylim=c(-2, 2),
+           legend=labels.spike, main="z-scores clamped to [-1, 1]")
+```
+
+```{r example_spike_ternarize}
+spike.plot(ternarize3(zEN[idx.spike, 1:50]), lwd=3, yaxs="i", ylim=c(-2, 2),
+           legend=labels.spike, main="ternarized z-scores")
+```
+
+For spike plots that appear in the published paper, we also need to provide suitable b/w versions.
+
+
+```{r example_spike_p_z_bw, fig.height=5.8}
+par.save <- par(mfrow=c(2,1), mar=c(1,4,4,2)+.1)
+spike.plot(FreqEN$S[idx.spike, 1:50], lwd=3, yaxs="i", ylim=c(0, 0.04),
+           col=grayscale.pal, lty="solid", legend=labels.spike, main="relative frequencies")
+spike.plot(zEN[idx.spike, 1:50], lwd=3, yaxs="i", ylim=c(-2, 2),
+           col=grayscale.pal, lty="solid", legend=labels.spike, main="standardized z-scores")
+par(par.save)
+```
+
+```{r example_spike_clamp_bw}
+spike.plot(clamp(zEN[idx.spike, 1:50], min=-1, max=1), lwd=3, yaxs="i", ylim=c(-2, 2),
+           col=grayscale.pal, lty="solid", legend=labels.spike, main="z-scores clamped to [-1, 1]")
+```
+
+```{r example_spike_ternarize_bw}
+spike.plot(ternarize3(zEN[idx.spike, 1:50]), lwd=3, yaxs="i", ylim=c(-2, 2),
+           col=grayscale.pal, lty="solid", legend=labels.spike, main="ternarized z-scores")
+```
+
+
+# Evaluation graphs
+
+Standard evaluation is carried out using the `mfw.plot` function, with parameters
+
+ - `M`: row matrix of feature vectors
+ - `gold`: vector of gold standard categories (e.g. authors)
+ - `params`: data structure of parameter settings for the lines to be drawn (must specify `label`, `col`, `lty`, `method` and optionally `p`, `normalize`, `norm.p`)
+ - `normalize`, `norm.p`: default normalization applied to feature vectors (or `NA` for none; see `delta.dist` function)
+ - `clust.method`: clustering method (see `pam.cluster` function)
+ - `n.clusters`: desired number of clusters (specify range for automatic selection based on silhouette width)
+ - `transform`: transformation function applied to complete feature matrix
+ - `skip`: number of mfw to skip (i.e. drop first columns from `M`)
+
+```{r, echo=FALSE}
+mfw.plot <- function (M, gold, params=param.list, normalize=NA, norm.p=2, p=2, clust.method="pam",
+                      transform=NULL, skip=0, n.clusters=NULL, n=n.vals, 
+                      grid=draw.grid, lwd=3, palette=muted.pal, main="") {
+  if (skip > 0) M <- M[, -(1:skip)]
+  if (ncol(M) < max(n.vals)) stop("feature matrix M doesn't have enough columns")
+  if (ncol(M) > max(n.vals) + 5000) M <- M[, 1:max(n.vals)]
+  if (!is.null(transform)) M <- transform(M)
+  plot(1, 1, type="n", log="x", xlim=range(n.vals), ylim=c(0,100),
+       xlab="number of mfw", ylab="adjusted Rand index (%)", main=main,
+       xaxs="i", yaxs="i", las=3, xaxp=c(range(n.vals), 3))
+  if (!is.null(draw.grid)) draw.grid()
+  for (R in params) {
+    R.normalize <- if (!is.null(R$normalize)) R$normalize else normalize
+    R.norm.p <- if (!is.null(R$norm.p)) R$norm.p else norm.p
+    R.p <- if (!is.null(R$p)) R$p else p
+    res <- evaluate(M, gold, n=n.vals, method=R$method, p=R.p, clusters=n.clusters,
+                    clust.method=clust.method, normalize=R.normalize, norm.p=R.norm.p)
+    lines(n.vals, res$adj.rand, lwd=lwd, col=palette[R$col], lty=R$lty)
+  }
+  legend("bottomright", inset=.02, bg="white", lwd=lwd, 
+         col=palette[do.call(c, lapply(params, function (R) R$col))],
+         lty=do.call(c, lapply(params, function (R) R$lty)),
+         legend=do.call(c, lapply(params, function (R) R$label)))
+}
+```
+
+
+Evaluation steps and corresponding grid for the plots:
+
+```{r evaluation_config_1}
+## roughly logarithmic steps from 10 to 20000
+n.vals <- c(10,15,20,25,32,40,50,65,80,100,125,150,200,250,320,400,500,650,800,1000,
+            1250,1500,2000,2500,3200,4000,5000,6500,8000,10000)
+draw.grid <- function () { # corresponding grid for plot region
+  abline(h=seq(0, 100, 10), col="grey60")
+  abline(v=c(10,20,50,100,200,500,1000,2000,5000,10000), col="grey60")
+}
+```
+
+Data structures defining the lines to be shown in MFW evaluation plots:
+
+```{r evaluation_config_2}
+param.list <- list(
+  list(method="cosine", col=2, lty="solid", label=expression("Cosine Delta")),
+  list(method="minkowski", p=0.5, col=5, lty="solid", label=expression(L[1/2]*"-Delta")),
+  list(method="manhattan", col=1, lty="solid", label=expression("Burrows "*(L[1])*" Delta")),
+  list(method="euclidean", col=3, lty="solid", label=expression("Quadratic "*(L[2])*" Delta")),
+  list(method="minkowski", p=4, col=4, lty="solid", label=expression(L[4]*"-Delta")))
+param.basic <- c(param.list[c(1,3,4)], list(
+  list(method="euclidean", normalize="euclidean", col=4, lty="dashed", label=expression("Quadratic Delta with "*L[2]*" normalization"))))
+```
+
+and corresponding b/w version for plots that are included in the published paper (colour indices are intended to index `grayscale.pal`)
+
+```{r evaluation_config_2_bw}
+param.list.bw <- list(
+  list(method="cosine", col=2, lty="solid", label=expression("Cosine Delta")),
+  list(method="minkowski", p=0.5, col=2, lty="32", label=expression(L[1/2]*"-Delta")),
+  list(method="manhattan", col=1, lty="solid", label=expression("Burrows "*(L[1])*" Delta")),
+  list(method="euclidean", col=1, lty="32", label=expression("Quadratic "*(L[2])*" Delta")),
+  list(method="minkowski", p=4, col=4, lty="solid", label=expression(L[4]*"-Delta")))
+param.basic.bw <- c(param.list.bw[c(1,3,4)], list(
+  list(method="euclidean", normalize="euclidean", col=1, lty="12", label=expression("Quadratic Delta with "*L[2]*" normalization"))))
+```
+
+
+## The effect of normalization
+
+Evaluation of $\Delta_B$, $\Delta_Q$ and $\Delta_{\angle}$ for all three languages, including a $L_2$-normalized version of $\Delta_Q$.
+
+```{r eval_basic_EN}
+mfw.plot(zEN, goldEN, param=param.basic, main="English Corpus | PAM clustering")
+```
+
+```{r eval_basic_EN_bw}
+mfw.plot(zEN, goldEN, param=param.basic.bw, palette=grayscale.pal, main="English Corpus | PAM clustering")
+```
+
+```{r eval_basic_DE}
+mfw.plot(zDE, goldDE, param=param.basic, main="German Corpus | PAM clustering")
+```
+
+```{r eval_basic_FR}
+mfw.plot(zFR, goldFR, param=param.basic, main="French Corpus | PAM clustering")
+```
+
+Evaluation of additional Minkowski $p$-distances with and without normalization, for all three languages.  Parameters for the evaluation lines are in the default `param.list` structure.
+
+```{r eval_mink_EN}
+mfw.plot(zEN, goldEN, main="English Corpus | PAM clustering")
+```
+
+```{r eval_mink_EN_bw}
+mfw.plot(zEN, goldEN, param=param.list.bw, palette=grayscale.pal, main="English Corpus | PAM clustering")
+```
+
+```{r eval_mink_DE}
+mfw.plot(zDE, goldDE, main="German Corpus | PAM clustering")
+```
+
+```{r eval_mink_FR}
+mfw.plot(zFR, goldFR, main="French Corpus | PAM clustering")
+```
+
+```{r eval_mink_normL2_EN}
+mfw.plot(zEN, goldEN, normalize="euclidean", main="English Corpus | L2 normalization | PAM clustering")
+```
+
+```{r eval_mink_normL2_EN_bw}
+mfw.plot(zEN, goldEN, param=param.list.bw, palette=grayscale.pal, normalize="euclidean", main="English Corpus | L2 normalization | PAM clustering")
+```
+
+```{r eval_mink_normL2_DE}
+mfw.plot(zDE, goldDE, normalize="euclidean", main="German Corpus | L2 normalization | PAM clustering")
+```
+
+```{r eval_mink_normL2_FR}
+mfw.plot(zFR, goldFR, normalize="euclidean", main="French Corpus | L2 normalization | PAM clustering")
+```
+
+```{r eval_mink_normL1_EN}
+mfw.plot(zEN, goldEN, normalize="manhattan", main="English Corpus | L1 normalization | PAM clustering")
+```
+
+```{r eval_mink_normL1_DE}
+mfw.plot(zDE, goldDE, normalize="manhattan", main="German Corpus | L1 normalization | PAM clustering")
+```
+
+```{r eval_mink_normL1_FR}
+mfw.plot(zFR, goldFR, normalize="manhattan", main="French Corpus | L1 normalization | PAM clustering")
+```
+
+
+## Truncating outliers and ternarization
+
+```{r eval_mink_clamp_EN}
+mfw.plot(zEN, goldEN, transform=clamp2, main="English Corpus | z-scores clamped to [-2, 2] | PAM clustering")
+```
+
+```{r eval_mink_clamp_EN_bw}
+mfw.plot(zEN, goldEN, param=param.list.bw, palette=grayscale.pal, transform=clamp2, main="English Corpus | z-scores clamped to [-2, 2] | PAM clustering")
+```
+
+```{r eval_mink_clamp_DE}
+mfw.plot(zDE, goldDE, transform=clamp2, main="German Corpus | z-scores clamped to [-2, 2] | PAM clustering")
+```
+
+```{r eval_mink_clamp_FR}
+mfw.plot(zFR, goldFR, transform=clamp2, main="French Corpus | z-scores clamped to [-2, 2] | PAM clustering")
+```
+
+```{r eval_mink_tern3_EN}
+mfw.plot(zEN, goldEN, transform=ternarize3, main="English Corpus | ternarization | PAM clustering")
+```
+
+```{r eval_mink_tern3_EN_bw}
+mfw.plot(zEN, goldEN, param=param.list.bw, palette=grayscale.pal, transform=ternarize3, main="English Corpus | ternarization | PAM clustering")
+```
+
+```{r eval_mink_tern3_DE}
+mfw.plot(zDE, goldDE, transform=ternarize3, main="German Corpus | ternarization | PAM clustering")
+```
+
+```{r eval_mink_tern3_FR}
+mfw.plot(zFR, goldFR, transform=ternarize3, main="French Corpus | ternarization | PAM clustering")
+```
+
+
+## The effect of Minkowski $p$
+
+Plot clustering accuracy for different Minkowski $p$ metrics with fixed $n_w$.  Since we want to combine evaluation settings in different ways, plots are created manually without a helper function.
+
+```{r eval_p_setup}
+p.vals <- 2 ^ seq(-2, 2, .2)
+draw.grid.p <- function () {
+  abline(h=seq(0, 100, 10), col="grey60")
+  abline(v=seq(0.2, 4, .1), col="grey60", lwd=.5)
+  abline(v=c(0.4, 1, 2), col="grey60")
+}
+```
+
+First determine how big the differences between the $p$-metrics are depending on the number $n_w$ of mfw used as features.
+
+```{r eval_p_nw_EN, echo=FALSE}
+M <- zEN[, 1:5000]
+gold <- goldEN
+palette(muted.pal)
+plot(1, 1, type="n", log="x", xlim=range(p.vals), ylim=c(0,100), xaxs="i", yaxs="i", xaxp=c(0.2, 5, 3),
+       xlab="exponent p of Minkowski metric", ylab="adjusted Rand index (%)", main="English Corpus | PAM clustering")
+draw.grid.p()
+lines(p.vals, evaluate(M, gold, n=5000, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=1)
+lines(p.vals, evaluate(M, gold, n=2000, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=2)
+lines(p.vals, evaluate(M, gold, n=1000, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=3)
+lines(p.vals, evaluate(M, gold, n=500,  method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=4)
+legend("bottomleft", inset=.02, bg="white", lwd=3, col=1:4, legend=expression(n[w] == 5000, n[w] == 2000, n[w] == 1000, n[w] == 500))
+```
+
+```{r eval_p_nw_DE, echo=FALSE}
+M <- zDE[, 1:5000]
+gold <- goldDE
+palette(muted.pal)
+plot(1, 1, type="n", log="x", xlim=range(p.vals), ylim=c(0,100), xaxs="i", yaxs="i", xaxp=c(0.2, 5, 3),
+       xlab="exponent p of Minkowski metric", ylab="adjusted Rand index (%)", main="German Corpus | PAM clustering")
+draw.grid.p()
+lines(p.vals, evaluate(M, gold, n=5000, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=1)
+lines(p.vals, evaluate(M, gold, n=2000, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=2)
+lines(p.vals, evaluate(M, gold, n=1000, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=3)
+lines(p.vals, evaluate(M, gold, n=500,  method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=4)
+legend("bottomleft", inset=.02, bg="white", lwd=3, col=1:4, legend=expression(n[w] == 5000, n[w] == 2000, n[w] == 1000, n[w] == 500))
+```
+
+```{r eval_p_nw_FR, echo=FALSE}
+M <- zFR[, 1:5000]
+gold <- goldFR
+palette(muted.pal)
+plot(1, 1, type="n", log="x", xlim=range(p.vals), ylim=c(0,100), xaxs="i", yaxs="i", xaxp=c(0.2, 5, 3),
+       xlab="exponent p of Minkowski metric", ylab="adjusted Rand index (%)", main="French Corpus | PAM clustering")
+draw.grid.p()
+lines(p.vals, evaluate(M, gold, n=5000, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=1)
+lines(p.vals, evaluate(M, gold, n=2000, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=2)
+lines(p.vals, evaluate(M, gold, n=1000, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=3)
+lines(p.vals, evaluate(M, gold, n=500,  method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=4)
+legend("bottomleft", inset=.02, bg="white", lwd=3, col=1:4, legend=expression(n[w] == 5000, n[w] == 2000, n[w] == 1000, n[w] == 500))
+```
+
+For the following experiments we set $n_w = 5000$ where robustness becomes an issue and there are substantial differences between the $p$-metrics.  In particular, performance degrades for large _and_ for very small $p$.  However, with the right $p$, it can still outperform smaller $n_w$ except for the German corpus.
+
+In the next step, we compare the effect of different vector normalizations.
+
+```{r eval_p_normalize_EN, echo=FALSE}
+M <- zEN[, 1:5000]
+gold <- goldEN
+palette(muted.pal)
+plot(1, 1, type="n", log="x", xlim=range(p.vals), ylim=c(0,100), xaxs="i", yaxs="i", xaxp=c(0.2, 5, 3),
+       xlab="exponent p of Minkowski metric", ylab="adjusted Rand index (%)", main="English Corpus | n = 5000 | PAM clustering")
+draw.grid.p()
+lines(p.vals, evaluate(M, gold, n=5000, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=1)
+lines(p.vals, evaluate(M, gold, n=5000, method="minkowski", p=p.vals, normalize="euclidean", do.nn=FALSE)$adj.rand, lwd=3, col=2)
+lines(p.vals, evaluate(M, gold, n=5000, method="minkowski", p=p.vals, normalize="manhattan", do.nn=FALSE)$adj.rand, lwd=3, col=3)
+legend("bottomleft", inset=.02, bg="white", lwd=3, col=1:3, legend=expression("no normalization", "Euclidean "*(L[1]), "Manhattan "*(L[2])))
+```
+
+```{r eval_p_normalize_DE, echo=FALSE}
+M <- zDE[, 1:5000]
+gold <- goldDE
+palette(muted.pal)
+plot(1, 1, type="n", log="x", xlim=range(p.vals), ylim=c(0,100), xaxs="i", yaxs="i", xaxp=c(0.2, 5, 3),
+       xlab="exponent p of Minkowski metric", ylab="adjusted Rand index (%)", main="German Corpus | n = 5000 | PAM clustering")
+draw.grid.p()
+lines(p.vals, evaluate(M, gold, n=5000, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=1)
+lines(p.vals, evaluate(M, gold, n=5000, method="minkowski", p=p.vals, normalize="euclidean", do.nn=FALSE)$adj.rand, lwd=3, col=2)
+lines(p.vals, evaluate(M, gold, n=5000, method="minkowski", p=p.vals, normalize="manhattan", do.nn=FALSE)$adj.rand, lwd=3, col=3)
+legend("bottomleft", inset=.02, bg="white", lwd=3, col=1:3, legend=expression("no normalization", "Euclidean "*(L[1]), "Manhattan "*(L[2])))
+```
+
+```{r eval_p_normalize_FR, echo=FALSE}
+M <- zFR[, 1:5000]
+gold <- goldFR
+palette(muted.pal)
+plot(1, 1, type="n", log="x", xlim=range(p.vals), ylim=c(0,100), xaxs="i", yaxs="i", xaxp=c(0.2, 5, 3),
+       xlab="exponent p of Minkowski metric", ylab="adjusted Rand index (%)", main="French Corpus | n = 5000 | PAM clustering")
+draw.grid.p()
+lines(p.vals, evaluate(M, gold, n=5000, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=1)
+lines(p.vals, evaluate(M, gold, n=5000, method="minkowski", p=p.vals, normalize="euclidean", do.nn=FALSE)$adj.rand, lwd=3, col=2)
+lines(p.vals, evaluate(M, gold, n=5000, method="minkowski", p=p.vals, normalize="manhattan", do.nn=FALSE)$adj.rand, lwd=3, col=3)
+legend("bottomleft", inset=.02, bg="white", lwd=3, col=1:3, legend=expression("no normalization", "Euclidean "*(L[1]), "Manhattan "*(L[2])))
+```
+
+Finally, compare Euclidean normalization with clamping of outliers and ternarization of the vectors.
+
+```{r eval_p_transform_EN, echo=FALSE}
+M <- zEN[, 1:5000]
+gold <- goldEN
+palette(muted.pal)
+plot(1, 1, type="n", log="x", xlim=range(p.vals), ylim=c(0,100), xaxs="i", yaxs="i", xaxp=c(0.2, 5, 3),
+       xlab="exponent p of Minkowski metric", ylab="adjusted Rand index (%)", main="English Corpus | n = 5000 | PAM clustering")
+draw.grid.p()
+lines(p.vals, evaluate(M, gold, n=5000, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=1)
+lines(p.vals, evaluate(M, gold, n=5000, method="minkowski", p=p.vals, normalize="euclidean", do.nn=FALSE)$adj.rand, lwd=3, col=2)
+lines(p.vals, evaluate(clamp2(M), gold, n=5000, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=3)
+lines(p.vals, evaluate(ternarize3(M), gold, n=5000, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=4)
+legend("bottomleft", inset=.02, bg="white", lwd=3, col=1:4, legend=c("no transformation", "Euclidean normalization", "outliers clamped", "ternarization"))
+```
+
+```{r eval_p_transform_DE, echo=FALSE}
+M <- zDE[, 1:5000]
+gold <- goldDE
+palette(muted.pal)
+plot(1, 1, type="n", log="x", xlim=range(p.vals), ylim=c(0,100), xaxs="i", yaxs="i", xaxp=c(0.2, 5, 3),
+       xlab="exponent p of Minkowski metric", ylab="adjusted Rand index (%)", main="German Corpus | n = 5000 | PAM clustering")
+draw.grid.p()
+lines(p.vals, evaluate(M, gold, n=5000, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=1)
+lines(p.vals, evaluate(M, gold, n=5000, method="minkowski", p=p.vals, normalize="euclidean", do.nn=FALSE)$adj.rand, lwd=3, col=2)
+lines(p.vals, evaluate(clamp2(M), gold, n=5000, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=3)
+lines(p.vals, evaluate(ternarize3(M), gold, n=5000, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=4)
+legend("bottomleft", inset=.02, bg="white", lwd=3, col=1:4, legend=c("no transformation", "Euclidean normalization", "outliers clamped", "ternarization"))
+```
+
+```{r eval_p_transform_FR, echo=FALSE}
+M <- zFR[, 1:5000]
+gold <- goldFR
+palette(muted.pal)
+plot(1, 1, type="n", log="x", xlim=range(p.vals), ylim=c(0,100), xaxs="i", yaxs="i", xaxp=c(0.2, 5, 3),
+       xlab="exponent p of Minkowski metric", ylab="adjusted Rand index (%)", main="French Corpus | n = 5000 | PAM clustering")
+draw.grid.p()
+lines(p.vals, evaluate(M, gold, n=5000, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=1)
+lines(p.vals, evaluate(M, gold, n=5000, method="minkowski", p=p.vals, normalize="euclidean", do.nn=FALSE)$adj.rand, lwd=3, col=2)
+lines(p.vals, evaluate(clamp2(M), gold, n=5000, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=3)
+lines(p.vals, evaluate(ternarize3(M), gold, n=5000, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=4)
+legend("bottomleft", inset=.02, bg="white", lwd=3, col=1:4, legend=c("no transformation", "Euclidean normalization", "outliers clamped", "ternarization"))
+```
+
+Clamping outliers and -- even more so -- ternarization lead to very robust and good performance.  Except for the French corpus, they are as good as cosine / Euclidean normalization and aren't sensitive to the choice of $p$.  The unusually high dimensionality $n_w = 5000$ may have some influence as well, though, so reproduce the analysis for $n_w = 1500$ (as a compromise between the commonly used values $n_w = 1000$ and $n_w = 2000$).
+
+```{r eval_p_transform_2k_EN, echo=FALSE}
+M <- zEN[, 1:5000]
+gold <- goldEN
+palette(muted.pal)
+plot(1, 1, type="n", log="x", xlim=range(p.vals), ylim=c(0,100), xaxs="i", yaxs="i", xaxp=c(0.2, 5, 3),
+       xlab="exponent p of Minkowski metric", ylab="adjusted Rand index (%)", main="English Corpus | n = 1500 | PAM clustering")
+draw.grid.p()
+lines(p.vals, evaluate(M, gold, n=1500, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=1)
+lines(p.vals, evaluate(M, gold, n=1500, method="minkowski", p=p.vals, normalize="euclidean", do.nn=FALSE)$adj.rand, lwd=3, col=2)
+lines(p.vals, evaluate(clamp2(M), gold, n=1500, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=3)
+lines(p.vals, evaluate(ternarize3(M), gold, n=1500, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=4)
+legend("bottomleft", inset=.02, bg="white", lwd=3, col=1:4, legend=c("no transformation", "Euclidean normalization", "outliers clamped", "ternarization"))
+```
+
+```{r eval_p_transform_2k_EN_bw, echo=FALSE}
+M <- zEN[, 1:5000]
+gold <- goldEN
+palette(grayscale.pal)
+plot(1, 1, type="n", log="x", xlim=range(p.vals), ylim=c(0,100), xaxs="i", yaxs="i", xaxp=c(0.2, 5, 3),
+       xlab="exponent p of Minkowski metric", ylab="adjusted Rand index (%)", main="English Corpus | n = 1500 | PAM clustering")
+draw.grid.p()
+lines(p.vals, evaluate(M, gold, n=1500, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=2, lty="solid")
+lines(p.vals, evaluate(M, gold, n=1500, method="minkowski", p=p.vals, normalize="euclidean", do.nn=FALSE)$adj.rand, lwd=3, col=2, lty="32")
+lines(p.vals, evaluate(clamp2(M), gold, n=1500, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=1, lty="solid")
+lines(p.vals, evaluate(ternarize3(M), gold, n=1500, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=1, lty="32")
+legend("bottomleft", inset=.02, bg="white", lwd=3, col=c(2,2,1,1), lty=rep(c("solid", "32"), 2), legend=c("no transformation", "Euclidean normalization", "outliers clamped", "ternarization"))
+```
+
+
+```{r eval_p_transform_2k_DE, echo=FALSE}
+M <- zDE[, 1:5000]
+gold <- goldDE
+palette(muted.pal)
+plot(1, 1, type="n", log="x", xlim=range(p.vals), ylim=c(0,100), xaxs="i", yaxs="i", xaxp=c(0.2, 5, 3),
+       xlab="exponent p of Minkowski metric", ylab="adjusted Rand index (%)", main="German Corpus | n = 1500 | PAM clustering")
+draw.grid.p()
+lines(p.vals, evaluate(M, gold, n=1500, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=1)
+lines(p.vals, evaluate(M, gold, n=1500, method="minkowski", p=p.vals, normalize="euclidean", do.nn=FALSE)$adj.rand, lwd=3, col=2)
+lines(p.vals, evaluate(clamp2(M), gold, n=1500, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=3)
+lines(p.vals, evaluate(ternarize3(M), gold, n=1500, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=4)
+legend("bottomleft", inset=.02, bg="white", lwd=3, col=1:4, legend=c("no transformation", "Euclidean normalization", "outliers clamped", "ternarization"))
+```
+
+```{r eval_p_transform_2k_FR, echo=FALSE}
+M <- zFR[, 1:5000]
+gold <- goldFR
+palette(muted.pal)
+plot(1, 1, type="n", log="x", xlim=range(p.vals), ylim=c(0,100), xaxs="i", yaxs="i", xaxp=c(0.2, 5, 3),
+       xlab="exponent p of Minkowski metric", ylab="adjusted Rand index (%)", main="French Corpus | n = 1500 | PAM clustering")
+draw.grid.p()
+lines(p.vals, evaluate(M, gold, n=1500, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=1)
+lines(p.vals, evaluate(M, gold, n=1500, method="minkowski", p=p.vals, normalize="euclidean", do.nn=FALSE)$adj.rand, lwd=3, col=2)
+lines(p.vals, evaluate(clamp2(M), gold, n=1500, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=3)
+lines(p.vals, evaluate(ternarize3(M), gold, n=1500, method="minkowski", p=p.vals, do.nn=FALSE)$adj.rand, lwd=3, col=4)
+legend("bottomleft", inset=.02, bg="white", lwd=3, col=1:4, legend=c("no transformation", "Euclidean normalization", "outliers clamped", "ternarization"))
+```
+
+
+# Analyzing the distance distributions
+
+In order to gain a better understanding of how normalization and other vector transformations affect the distances between points, we compare the distributions of distances between texts from the same author and texts from different authors.  Since transformations (esp. normalization) can drastically change the scale of distances, we rescale vectors so that they have an _average_ length of 1 (which is a no-op for normalized vectors).
+
+Helper functions for rescaling and for obtaining distances of same-author and different-author text pairs. Both functions pass on additional arguments to `rowNorms` and `dist.matrix`, respecticely, so different norms and metrics can be selected.
+
+```{r distance_helpers}
+avg.normalize <- function (M, ...) {
+  scaleMargins(M, rows = 1 / mean(rowNorms(M, ... )))
+}
+dist.text.pairs <- function (M, gold, ...) {
+  DM <- dist.matrix(M, ...)
+  is.same <- outer(gold, gold, `==`) # marks same-author pairs
+  res1 <- data.frame(d=DM[upper.tri(DM) & is.same], same="same author")
+  res2 <- data.frame(d=DM[upper.tri(DM) & !is.same], same="different authors")
+  rbind(res1, res2)
+}
+```
+
+## The effect of vector transformations on vector length
+
+The following histograms show how vector lengths are affected by the different feature transformations.  Keep in mind that $L_2$-normalized vectors have the same Euclidean length of 1.  We plot the distributions in the English corpus for $n_w = 5000$, where $\Delta_Q$ already shows a substantial decline in clustering quality. 
+
+```{r hist_z_EN, fig.height=2.5, echo=FALSE}
+my.brks <- seq(0.525, 1.475, .05)
+par(mfrow=c(1,2))
+x <- rowNorms(avg.normalize(zEN[, 1:5000]), method="euclidean")
+hist(x, breaks=my.brks, xlim=c(0, 1.5),
+     xlab="Euclidean norm", main="English (z-scores, n=5000)")
+rug(x, col=muted.pal[3])
+x <- rowNorms(avg.normalize(zEN[, 1:5000], method="manhattan"), method="manhattan")
+hist(x, breaks=my.brks, xlim=c(0, 1.5),
+     xlab="Manhattan norm", main="English (z-scores, n=5000)")
+rug(x, col=muted.pal[3])
+par(mfrow=c(1,1))
+```
+
+```{r hist_clamp_EN, fig.height=2.5, echo=FALSE}
+par(mfrow=c(1,2))
+x <- rowNorms(avg.normalize(clamp2(zEN[, 1:5000])), method="euclidean")
+hist(x, breaks=my.brks, xlim=c(0, 1.5),
+     xlab="Euclidean norm", main="English (outliers clamped at |z|=2, n=5000)")
+rug(x, col=muted.pal[3])
+x <- rowNorms(avg.normalize(clamp2(zEN[, 1:5000]), method="manhattan"), method="manhattan")
+hist(x, breaks=my.brks, xlim=c(0, 1.5),
+     xlab="Manhattan norm", main="English (outliers clamped at |z|=2, n=5000)")
+rug(x, col=muted.pal[3])
+par(mfrow=c(1,1))
+```
+
+```{r hist_tern_EN, fig.height=2.5, echo=FALSE}
+par(mfrow=c(1,2))
+x <- rowNorms(avg.normalize(ternarize3(zEN[, 1:5000])), method="euclidean")
+hist(x, breaks=my.brks, xlim=c(0, 1.5),
+     xlab="Euclidean norm", main="English (ternarized, n=5000)")
+rug(x, col=muted.pal[3])
+x <- rowNorms(avg.normalize(ternarize3(zEN[, 1:5000]), method="manhattan"), method="manhattan")
+hist(x, breaks=my.brks, xlim=c(0, 1.5),
+     xlab="Manhattan norm", main="English (ternarized, n=5000)")
+rug(x, col=muted.pal[3])
+par(mfrow=c(1,1))
+```
+
+
+## The effect of vector transformation on distances
+
+In a first step, look at how the length $n_w$ of the feature vectors affects the distance distributions with and without normalization.  Obviously the main effect of normalization is not to bring texts from the same author closer to each other (left panels), but rather to reduce variability of distances both within the same-author text pairs and within the different-author text pairs.  This indicates that vector length -- i.e. the amplitude of deviations $\mathbf{z}(D)$ from the mean -- is indeed a "noise" factor affecting all text pairs.  With the reduced variability, there is a fairly good separation between the groups, explaining the excellent clustering results.
+
+Two other observations are also noteworthy for the normalized vectors: (i) different-author pairs are almost precisely orthogonal (an angle of $90^{\circ}$ corresponds to a Euclidean distance of $\sqrt{2} = 1.414\ldots$ between normalized vectors); (ii) the variability in both groups becomes smaller with an increasing number $n_w$ of mfw.  This suggests a possible explanation in terms of the "curse of dimensionality" (which states that random vectors in a high-dimensional space are nearly orthogonal to each other with high probability), which should be explored further in subsequent experiments.
+
+```{r dist_nw_EN, fig.height=4.5, echo=FALSE}
+res.list <- list()
+for (nw in c(500, 1000, 2000, 5000)) {
+  for (normalize in c(FALSE, TRUE)) {
+    M <- zEN[, 1:nw]
+    if (normalize) M <- normalize.rows(M)
+    res <- dist.text.pairs(avg.normalize(M), goldEN, method="euclidean")
+    res$nw <- nw
+    res$trans <- if (normalize) "normalization" else "no transformation"
+    res.list <- append(res.list, list(res))
+  }
+}
+res <- do.call(rbind, res.list)
+print(ggplot(res, aes(y=d, x=factor(nw), col=factor(nw))) + geom_boxplot(show.legend=FALSE) + facet_grid(trans ~ same) + 
+  theme_grey(base_size=12) + labs(title="Distribution of distances in English Corpus", x="number of mfw", y="Euclidean distance"))
+```
+
+```{r dist_nw_DE, fig.height=4.5, echo=FALSE}
+res.list <- list()
+for (nw in c(500, 1000, 2000, 5000)) {
+  for (normalize in c(FALSE, TRUE)) {
+    M <- zDE[, 1:nw]
+    if (normalize) M <- normalize.rows(M)
+    res <- dist.text.pairs(avg.normalize(M), goldDE, method="euclidean")
+    res$nw <- nw
+    res$trans <- if (normalize) "normalization" else "no transformation"
+    res.list <- append(res.list, list(res))
+  }
+}
+res <- do.call(rbind, res.list)
+print(ggplot(res, aes(y=d, x=factor(nw), col=factor(nw))) + geom_boxplot(show.legend=FALSE) + facet_grid(trans ~ same) + 
+  theme_grey(base_size=12) + labs(title="Distribution of distances in German Corpus", x="number of mfw", y="Euclidean distance"))
+```
+
+```{r dist_nw_FR, fig.height=4.5, echo=FALSE}
+res.list <- list()
+for (nw in c(500, 1000, 2000, 5000)) {
+  for (normalize in c(FALSE, TRUE)) {
+    M <- zFR[, 1:nw]
+    if (normalize) M <- normalize.rows(M)
+    res <- dist.text.pairs(avg.normalize(M), goldFR, method="euclidean")
+    res$nw <- nw
+    res$trans <- if (normalize) "normalization" else "no transformation"
+    res.list <- append(res.list, list(res))
+  }
+}
+res <- do.call(rbind, res.list)
+print(ggplot(res, aes(y=d, x=factor(nw), col=factor(nw))) + geom_boxplot(show.legend=FALSE) + facet_grid(trans ~ same) + 
+  theme_grey(base_size=12) + labs(title="Distribution of distances in French Corpus", x="number of mfw", y="Euclidean distance"))
+```
+
+
+We can now compare the distance distribution under normalization with outlier clamping and ternarization.  Again, the plots suggest a straightforward interpretation.  Clamping outliers (with $|z| > 2$) has little effect on the distance distributions: variability is reduced slightly and distances between same-author texts are reduced by a very small amount (compare the medians and lower middle quartiles).  Ternarization, on the other hand, has almost the same effect as normalization, providing very clear support for the key profile hypothesis (H2).
+
+Further experiments should explore the connection between H2 and the "curse of dimensionality".  Perhaps our "key profiles" provide an intuitive explanation for the latter.
+
+```{r dist_trans_EN, fig.height=4.5, echo=FALSE}
+res.list <- list()
+for (nw in c(1000, 5000)) {
+  for (trans in c("none", "normalized", "outliers", "ternarized")) {
+    M <- zEN[, 1:nw]
+    M <- switch(trans, M, # default
+                normalized = normalize.rows(M),
+                outliers = clamp2(M),
+                ternarized = ternarize3(M))
+    res <- dist.text.pairs(avg.normalize(M), goldEN, method="euclidean")
+    res$nw <- nw; res$trans <- trans
+    res.list <- append(res.list, list(res))
+  }
+}
+res <- do.call(rbind, res.list)
+res <- transform(res, nw=sprintf("n = %d", nw))
+print(ggplot(res, aes(y=d, x=trans, col=trans)) + geom_boxplot(show.legend=FALSE) + facet_grid(nw ~ same) + 
+  theme_grey(base_size=12) + labs(title="Distribution of distances in English Corpus", x="vector transformation", y="Euclidean distance"))
+```
+
+```{r dist_trans_DE, fig.height=4.5, echo=FALSE}
+res.list <- list()
+for (nw in c(1000, 5000)) {
+  for (trans in c("none", "normalized", "outliers", "ternarized")) {
+    M <- zDE[, 1:nw]
+    M <- switch(trans, M, # default
+                normalized = normalize.rows(M),
+                outliers = clamp2(M),
+                ternarized = ternarize3(M))
+    res <- dist.text.pairs(avg.normalize(M), goldDE, method="euclidean")
+    res$nw <- nw; res$trans <- trans
+    res.list <- append(res.list, list(res))
+  }
+}
+res <- do.call(rbind, res.list)
+res <- transform(res, nw=sprintf("n = %d", nw))
+print(ggplot(res, aes(y=d, x=trans, col=trans)) + geom_boxplot(show.legend=FALSE) + facet_grid(nw ~ same) + 
+  theme_grey(base_size=12) + labs(title="Distribution of distances in German Corpus", x="vector transformation", y="Euclidean distance"))
+```
+
+```{r dist_trans_FR, fig.height=4.5, echo=FALSE}
+res.list <- list()
+for (nw in c(1000, 5000)) {
+  for (trans in c("none", "normalized", "outliers", "ternarized")) {
+    M <- zFR[, 1:nw]
+    M <- switch(trans, M, # default
+                normalized = normalize.rows(M),
+                outliers = clamp2(M),
+                ternarized = ternarize3(M))
+    res <- dist.text.pairs(avg.normalize(M), goldFR, method="euclidean")
+    res$nw <- nw; res$trans <- trans
+    res.list <- append(res.list, list(res))
+  }
+}
+res <- do.call(rbind, res.list)
+res <- transform(res, nw=sprintf("n = %d", nw))
+print(ggplot(res, aes(y=d, x=trans, col=trans)) + geom_boxplot(show.legend=FALSE) + facet_grid(nw ~ same) + 
+  theme_grey(base_size=12) + labs(title="Distribution of distances in French Corpus", x="vector transformation", y="Euclidean distance"))
+```
+
+
+# Addendum: N-Gram Tracing
+
+Grieve et al. (submitted) propose an **n-gram tracing** technique for authorship attribution of short texts, which is based on the proportion of word or character n-gram _types_ that are known from a relatively large amount of training data of the respective candidate author.  They demonstrate high accuracy in distinguishing between texts from Abraham Lincoln and John Hay and use the method to attribute the _Bixby letter_ to Hay.
+
+ - for word unigrams, this is an extension of our ternarization approach and supports the same intuitive hypothesis: that it is patterns of word use rather than numeric frequency differences which determine the characteristic fingerprint of an author
+
+ - test whether n-gram tracing is likely to work on our data, using a binarized matrix of word unigrams and cosine distance (which gives us a rough normalization for text size, but may not be as good as the original technique); note that Manhattan distance with L1 normalization doesn't make sense because we need to compute distances between binary vectors (and normalize post-hoc)
+
+Preparation: binarize matrices (and perhasps convert to sparse format for better efficiency)
+
+```{r grieve_prepare}
+BinDE <- sign(FreqDE$M)
+BinEN <- sign(FreqEN$M)
+BinFR <- sign(FreqFR$M)
+```
+
+Set up the evaluation plots
+
+```{r grieve_eval_config}
+n.vals <- c(100,200,500,1000,2000,3000,4000,5000,7500,10000,15000,20000,
+            30000,40000,50000,60000,70000,80000,90000,100000)
+draw.grid <- function () {
+  abline(h=seq(0, 100, 10), col="grey60")
+  abline(v=c(100,200,500,1000,2000,5000,10000,20000,50000,100000), col="grey60")
+}
+```
+
+And go:
+
+```{r grieve_eval, echo=FALSE}
+palette(muted.pal)
+plot(1, 1, type="n", log="x", xlim=range(n.vals), ylim=c(0,100), xaxs="i", yaxs="i", xaxp=c(range(n.vals), 3),
+       xlab="number of mfw", ylab="adjusted Rand index (%)", main="binarized matrix + cosine | PAM clustering")
+draw.grid()
+lines(n.vals, evaluate(BinDE, goldDE, n=n.vals, method="cosine", do.nn=FALSE)$adj.rand, lwd=3, col=1)
+lines(n.vals, evaluate(BinEN, goldEN, n=n.vals, method="cosine", do.nn=FALSE)$adj.rand, lwd=3, col=2)
+lines(n.vals, evaluate(BinFR, goldFR, n=n.vals, method="cosine", do.nn=FALSE)$adj.rand, lwd=3, col=3)
+legend("bottomleft", inset=.02, bg="white", lwd=3, col=1:3, legend=c("German", "English", "French"))
+```
+
+```{r grieve_eval_skip, echo=FALSE}
+palette(muted.pal)
+plot(1, 1, type="n", log="x", xlim=range(n.vals), ylim=c(0,100), xaxs="i", yaxs="i", xaxp=c(range(n.vals), 3),
+       xlab="number of mfw", ylab="adjusted Rand index (%)", main="binarized matrix + cosine | PAM clustering | skip 20k mfw")
+draw.grid()
+lines(n.vals, evaluate(BinDE[, -(1:2e4)], goldDE, n=n.vals, method="cosine", do.nn=FALSE)$adj.rand, lwd=3, col=1)
+lines(n.vals, evaluate(BinEN[, -(1:2e4)], goldEN, n=n.vals, method="cosine", do.nn=FALSE)$adj.rand, lwd=3, col=2)
+lines(n.vals, evaluate(BinFR[, -(1:2e4)], goldFR, n=n.vals, method="cosine", do.nn=FALSE)$adj.rand, lwd=3, col=3)
+legend("bottomleft", inset=.02, bg="white", lwd=3, col=1:3, legend=c("German", "English", "French"))
+```
